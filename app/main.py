@@ -408,7 +408,9 @@ async def notion_webhook(request: Request):
     global NOTION_VERIFICATION_TOKEN
     data = await request.json()
     logging.info(f"📩 Received Notion webhook: {data}")
-
+    
+    return {"status": "ok"}
+    
     # 🧩 STEP 1: Handle verification (only happens once)
     if "verification_token" in data:
         token = data["verification_token"]
