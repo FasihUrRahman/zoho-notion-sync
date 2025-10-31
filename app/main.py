@@ -128,6 +128,9 @@ def create_or_update_notion(zoho_contact):
         # First, try to find existing page by email
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
+        if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
+            logging.info(f"Email is not allowed: {email}")
+            return
         existing_page = next((r for r in notion_records if r["email"] == email), None)
         
         if existing_page:
@@ -229,6 +232,9 @@ def create_or_update_zoho(token, notion_record):
     note = notion_record.get("note", "")
     type_of_partner = notion_record.get("type_of_partner", "")
     mian_lga_serviced = notion_record.get("mian_lga_serviced", "")
+    if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
+        logging.info(f"Email is not allowed: {email}")
+        return
 
     if " " in full_name:
         first_name, last_name = full_name.split(" ", 1)
@@ -298,6 +304,10 @@ def create_or_update_zoho(token, notion_record):
 
 def delete_contact_from_zoho(token, notion_record):
     email = notion_record.get("email", "")
+
+    if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
+        logging.info(f"Email is not allowed: {email}")
+        return
     headers = {
         "Authorization": f"Zoho-oauthtoken {token}",
         "Content-Type": "application/json"
@@ -432,7 +442,7 @@ async def notion_webhook(request: Request):
             notion_record = fetch_notion_record(page_id)
             # logging.info(f"✅ Notion Record: {notion_record}")
             token = get_zoho_access_token()
-            # create_or_update_zoho(token, notion_record)
+            create_or_update_zoho(token, notion_record)
             logging.info(f"✅ Synced Notion → Zoho for page {page_id}")
 
         elif event_type == "page.deleted":
