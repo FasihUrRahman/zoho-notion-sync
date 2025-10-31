@@ -1,0 +1,13 @@
+{
+  "Note": "rich_text",
+  "Phone Number": "phone_number",
+  "Type of Corporate Partner": "select",
+  "Company Name": "rich_text",
+  "Email": "email",
+  "Created time": "created_time",
+  "Contract Status": "select",
+  "Full Name": "rich_text",
+  "Properties": "number",
+  "Mian LGA Serviced By RE Agent": "rich_text",
+  "ID": "title"
+}

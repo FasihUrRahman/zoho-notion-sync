@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  sync:
+    build: .
+    container_name: notion_zoho_sync
+    restart: always
+    env_file: .env
+    volumes:
+      - ./app:/app/app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
