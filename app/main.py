@@ -406,7 +406,7 @@ async def zoho_delete_webhook(request: Request):
 @app.post("/webhooks/notion")
 async def notion_webhook(request: Request):
     global NOTION_VERIFICATION_TOKEN
-    body = await request.body()
+    data = await request.body()
     logging.info(f"📩 Received Notion webhook: {data}")
     
     return {"status": "ok"}
