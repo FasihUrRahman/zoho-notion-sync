@@ -128,9 +128,9 @@ def create_or_update_notion(zoho_contact):
         # First, try to find existing page by email
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
-        if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
-            logging.info(f"Email is not allowed: {email}")
-            return
+        # if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
+        #     logging.info(f"Email is not allowed: {email}")
+        #     return
         existing_page = next((r for r in notion_records if r["email"] == email), None)
         
         if existing_page:
@@ -493,7 +493,7 @@ def poll_loop():
 
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
-    if POLL_LOOP:
-        poll_loop()
-    else:
-        uvicorn.run(app, host="0.0.0.0", port=3000)
+    poll_loop()
+    # if POLL_LOOP:
+    # else:
+    #     uvicorn.run(app, host="0.0.0.0", port=3000)
