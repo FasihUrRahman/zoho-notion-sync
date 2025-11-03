@@ -125,105 +125,60 @@ def fetch_notion_record(page_id):
 # -------------------- CREATE/UPDATE IN NOTION --------------------
 def create_or_update_notion(zoho_contact):
     try:
-        # First, try to find existing page by email
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
-        first_name = zoho_contact.get("First_Name", "")
-        last_name = zoho_contact.get("Last_Name", "")
-        full_name = f"{first_name} {last_name}".strip() or "Unknown"
-        # if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
-        #     logging.info(f"Email is not allowed: {email}")
-        #     return
+
         existing_page = next((r for r in notion_records if r["email"] == email), None)
-        
         if existing_page:
-            # UPDATE existing page
             url = f"https://api.notion.com/v1/pages/{existing_page['id']}"
             method = requests.patch
             log_action = "Updated"
         else:
-            # CREATE new page
             url = "https://api.notion.com/v1/pages"
             method = requests.post
             log_action = "Created"
-        
-        # Prepare properties with proper null handling
+
+        full_name = zoho_contact.get("Full_Name", "Unnamed Contact")
         properties = {
-            "Full Name": {
-                "rich_text": [{
-                    "text": {"content": full_name}
-                }]
-            },
-            "Company Name": {
-                "rich_text": [{
-                    "text": {"content": zoho_contact.get("Company", "") or ""}
-                }]
-            },
-            "Note": {
-                "rich_text": [{
-                    "text": {"content": zoho_contact.get("Description", "") or ""}
-                }]
-            },
-            "Email": {
-                "email": email if email else None
-            },
-            "Phone Number": {
-                "phone_number": zoho_contact.get("Phone", "") or None
-            }
+            "Full Name": {"title": [{"text": {"content": full_name}}]}
         }
-        
-        # Handle select fields (Contract Status and Type of Corporate Partner)
-        contract_status = zoho_contact.get("Contract_Status", "")
-        if contract_status:
-            properties["Contract Status"] = {
-                "select": {"name": contract_status}
-            }
-        else:
-            properties["Contract Status"] = {
-                "select": None
-            }
-            
-        type_of_partner = zoho_contact.get("Type_Of_Partner", "")
-        if type_of_partner:
-            properties["Type of Corporate Partner"] = {
-                "select": {"name": type_of_partner}
-            }
-        else:
-            properties["Type of Corporate Partner"] = {
-                "select": None
-            }
-            
-        # Handle Mian LGA Serviced field
-        mian_lga_serviced = zoho_contact.get("Mian_LGA_Serviced", "")
-        if mian_lga_serviced:
-            properties["Mian LGA Serviced By RE Agent"] = {
-                "rich_text": [{
-                    "text": {"content": mian_lga_serviced}
-                }]
-            }
-        else:
-            properties["Mian LGA Serviced By RE Agent"] = {
-                "rich_text": []
-            }
-        
-        # For new pages, include parent
-        if not existing_page:
-            payload = {
-                "parent": {"database_id": NOTION_DATABASE_ID},
-                "properties": properties
-            }
-        else:
-            # For updates, just send properties
-            payload = {"properties": properties}
-        
+
+        # Add only simple fields that exist in Notion
+        flexible_fields = {
+            "Email": zoho_contact.get("Email", ""),
+            "Phone": zoho_contact.get("Phone", ""),
+            "Company Name": zoho_contact.get("Company", ""),
+            "Description": zoho_contact.get("Description", ""),
+            "Contract Status": zoho_contact.get("Contract_Status", ""),
+            "Type of Corporate Partner": zoho_contact.get("Type_Of_Partner", ""),
+            "Mian LGA Serviced By RE Agent": zoho_contact.get("Mian_LGA_Serviced", "")
+        }
+
+        # 🔒 Gracefully skip any field Notion rejects
+        for field, value in flexible_fields.items():
+            try:
+                properties[field] = {"rich_text": [{"text": {"content": str(value or "")}}]}
+            except Exception:
+                continue
+
+        payload = {
+            "parent": {"database_id": NOTION_DATABASE_ID},
+            "properties": properties,
+        } if not existing_page else {"properties": properties}
+
         r = method(url, headers=NOTION_HEADERS, json=payload)
+
         if r.status_code in (200, 201):
-            logging.info(f"✅ {log_action} Notion record for {zoho_contact.get('Full_Name')}")
+            logging.info(f"✅ {log_action} Notion record for {full_name}")
         else:
-            logging.error(f"❌ Failed to {log_action.lower()} in Notion: {r.text}")
-            
+            if "is not a property that exists" in r.text:
+                logging.warning(f"⚠️ Skipped missing fields for {full_name}")
+            else:
+                logging.error(f"❌ Failed to {log_action.lower()} in Notion: {r.text}")
+
     except Exception as e:
         logging.error(f"❌ Error in create_or_update_notion: {e}")
+
 
 # -------------------- CREATE/UPDATE IN ZOHO --------------------
 def create_or_update_zoho(token, notion_record):
