@@ -57,7 +57,7 @@ def get_zoho_access_token():
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
-    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Note,Description,Created_Time"
+    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Account_Name,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Note,Description,Created_Time"
     response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
     response.raise_for_status()
     contacts = response.json().get("data", [])
@@ -151,9 +151,18 @@ def create_or_update_notion(zoho_contact):
         phone = zoho_contact.get("Mobile") or ""
         description = zoho_contact.get("Description") or ""
         contact_status = zoho_contact.get("Contact_Status") or "To Be Contacted"
-        company_name = zoho_contact.get("Company_Name") or ""  # optional future field
         lga_list = zoho_contact.get("Main_LGA_Serviced_By_RE_Agent") or []
         lga_serviced = ", ".join(lga_list) if isinstance(lga_list, list) else str(lga_list)
+
+        # ✅ Extract company name from Account_Name or Company
+        account = zoho_contact.get("Account_Name")
+        company_name = ""
+        if isinstance(account, dict):
+            company_name = account.get("name", "")
+        elif isinstance(account, str):
+            company_name = account
+        elif not company_name:
+            company_name = zoho_contact.get("Company", "")
 
         # ✅ Map exactly to your Notion fields
         properties = {
@@ -166,12 +175,11 @@ def create_or_update_notion(zoho_contact):
             "Notes": {"rich_text": [{"text": {"content": description}}]},
         }
 
-        # Optional: Company name (only add if your database has this field)
+        # ✅ Add Company Name if available
         if company_name:
             properties["Company Name"] = {"rich_text": [{"text": {"content": company_name}}]}
 
-        # ⚠️ Don't include "Created time" — it's managed by Notion itself
-
+        # Build payload
         payload = (
             {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": properties}
             if not existing_page else
