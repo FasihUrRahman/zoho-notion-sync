@@ -61,7 +61,7 @@ def get_zoho_contacts(token):
     response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
     response.raise_for_status()
     contacts = response.json().get("data", [])
-    logging.info(f"📥 Fetched {len(contacts)} contacts from Zoho")
+    logging.info(f"📥 Fetched {contacts} contacts from Zoho")
     return contacts
 
 # -------------------- FETCH NOTION RECORDS --------------------
@@ -128,6 +128,7 @@ def create_or_update_notion(zoho_contact):
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
 
+        # Find existing Notion record by email
         existing_page = next((r for r in notion_records if r["email"] == email), None)
         if existing_page:
             url = f"https://api.notion.com/v1/pages/{existing_page['id']}"
@@ -138,36 +139,37 @@ def create_or_update_notion(zoho_contact):
             method = requests.post
             log_action = "Created"
 
-        full_name = zoho_contact.get("Full_Name", "Unnamed Contact")
+        # Extract and sanitize Zoho fields
+        full_name = zoho_contact.get("Full_Name") or "Unnamed Contact"
+        company = zoho_contact.get("Company") or ""
+        email_val = zoho_contact.get("Email") or ""
+        phone = zoho_contact.get("Phone") or ""
+        description = zoho_contact.get("Description") or ""
+        contract_status = zoho_contact.get("Contract_Status") or "To Be Contacted"
+        partner_type = zoho_contact.get("Type_Of_Partner") or "Real Estate Agent"
+        lga_serviced = zoho_contact.get("Mian_LGA_Serviced") or ""
+
+        # Build Notion properties with proper field types
         properties = {
-            "Full Name": {"title": [{"text": {"content": full_name}}]}
+            "Full Name": {"title": [{"text": {"content": full_name}}]},
+            "Company Name": {"rich_text": [{"text": {"content": company}}]},
+            "Email": {"email": email_val},
+            "Phone Number": {"phone_number": phone},
+            "Contact Status": {"select": {"name": contract_status}},
+            "Type of Corporate Partner": {"select": {"name": partner_type}},
+            "Main LGA Serviced By RE Agent": {"rich_text": [{"text": {"content": lga_serviced}}]},
+            "Notes": {"rich_text": [{"text": {"content": description}}]},
         }
 
-        # Add only simple fields that exist in Notion
-        flexible_fields = {
-            "Email": zoho_contact.get("Email", ""),
-            "Phone": zoho_contact.get("Phone", ""),
-            "Company Name": zoho_contact.get("Company", ""),
-            "Description": zoho_contact.get("Description", ""),
-            "Contract Status": zoho_contact.get("Contract_Status", ""),
-            "Type of Corporate Partner": zoho_contact.get("Type_Of_Partner", ""),
-            "Mian LGA Serviced By RE Agent": zoho_contact.get("Mian_LGA_Serviced", "")
-        }
-
-        # 🔒 Gracefully skip any field Notion rejects
-        for field, value in flexible_fields.items():
-            try:
-                properties[field] = {"rich_text": [{"text": {"content": str(value or "")}}]}
-            except Exception:
-                continue
-
-        payload = {
-            "parent": {"database_id": NOTION_DATABASE_ID},
-            "properties": properties,
-        } if not existing_page else {"properties": properties}
+        payload = (
+            {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": properties}
+            if not existing_page else
+            {"properties": properties}
+        )
 
         r = method(url, headers=NOTION_HEADERS, json=payload)
 
+        # Handle response
         if r.status_code in (200, 201):
             logging.info(f"✅ {log_action} Notion record for {full_name}")
         else:
