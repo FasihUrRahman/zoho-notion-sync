@@ -157,16 +157,8 @@ def create_or_update_notion(zoho_contact):
 
 
         # ✅ Only sync Real Estate Agent or Property
-        if partner_type not in ["Real Estate Agent", "Property"]:
+        if partner_type not in ["Real Estate Agent", "Principal"]:
             logging.info(f"⏭️ Skipped {zoho_contact.get('Full_Name', 'Unnamed')} ({partner_type}) — not eligible for sync")
-            return
-
-        if partner_type == "Real Estate Agent" and not mobile:
-            logging.info(f"🚫 Skipped Real Estate Agent (no Mobile): {zoho_contact.get('Full_Name', 'Unnamed')}")
-            return
-
-        if partner_type == "Principal" and not (mobile or phone):
-            logging.info(f"🚫 Skipped Property/Principal (no Mobile or Phone): {zoho_contact.get('Full_Name', 'Unnamed')}")
             return
 
         # Check if this contact already exists
