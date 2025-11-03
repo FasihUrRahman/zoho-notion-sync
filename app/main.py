@@ -57,11 +57,11 @@ def get_zoho_access_token():
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
-    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Email,Phone,Company,Description,Contract_Status"
+    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=all"
     response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
     response.raise_for_status()
     contacts = response.json().get("data", [])
-    logging.info(f"📥 Fetched {contacts} contacts from Zoho")
+    logging.info(f"📥 Fetched {contacts[0]} contacts from Zoho")
     return contacts
 
 # -------------------- FETCH NOTION RECORDS --------------------
