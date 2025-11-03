@@ -129,12 +129,12 @@ def create_or_update_notion(zoho_contact):
         email = zoho_contact.get("Email", "")
         partner_type = zoho_contact.get("Type_Of_Corporate_Partner", "")
 
-        # ✅ Only sync Real Estate Agent or Property contacts
+        # ✅ Only sync Real Estate Agent or Property
         if partner_type not in ["Real Estate Agent", "Property"]:
             logging.info(f"⏭️ Skipped {zoho_contact.get('Full_Name', 'Unnamed')} ({partner_type}) — not eligible for sync")
             return
 
-        # Find existing Notion record by email
+        # Check if this contact already exists
         existing_page = next((r for r in notion_records if r["email"] == email), None)
         if existing_page:
             url = f"https://api.notion.com/v1/pages/{existing_page['id']}"
@@ -145,17 +145,17 @@ def create_or_update_notion(zoho_contact):
             method = requests.post
             log_action = "Created"
 
-        # 🧩 Extract Zoho fields safely
+        # Extract and clean Zoho fields
         full_name = zoho_contact.get("Full_Name") or "Unnamed Contact"
         email_val = zoho_contact.get("Email") or ""
         phone = zoho_contact.get("Mobile") or ""
         description = zoho_contact.get("Description") or ""
         contact_status = zoho_contact.get("Contact_Status") or "To Be Contacted"
-        created_time = zoho_contact.get("Created_Time") or ""
+        company_name = zoho_contact.get("Company_Name") or ""  # optional future field
         lga_list = zoho_contact.get("Main_LGA_Serviced_By_RE_Agent") or []
         lga_serviced = ", ".join(lga_list) if isinstance(lga_list, list) else str(lga_list)
 
-        # 🏗️ Build Notion properties with correct field types
+        # ✅ Map exactly to your Notion fields
         properties = {
             "Full Name": {"title": [{"text": {"content": full_name}}]},
             "Email": {"email": email_val},
@@ -166,12 +166,11 @@ def create_or_update_notion(zoho_contact):
             "Notes": {"rich_text": [{"text": {"content": description}}]},
         }
 
-        # Optional Created Time → add only if valid
-        if created_time:
-            try:
-                properties["Created Time"] = {"date": {"start": created_time}}
-            except Exception as e:
-                logging.warning(f"⚠️ Could not parse Created_Time for {full_name}: {e}")
+        # Optional: Company name (only add if your database has this field)
+        if company_name:
+            properties["Company Name"] = {"rich_text": [{"text": {"content": company_name}}]}
+
+        # ⚠️ Don't include "Created time" — it's managed by Notion itself
 
         payload = (
             {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": properties}
@@ -179,7 +178,7 @@ def create_or_update_notion(zoho_contact):
             {"properties": properties}
         )
 
-        # 🚀 Push to Notion
+        # Push to Notion
         r = method(url, headers=NOTION_HEADERS, json=payload)
 
         if r.status_code in (200, 201):
