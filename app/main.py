@@ -60,7 +60,7 @@ def get_zoho_contacts(token):
     all_contacts = []
     page = 1
     per_page = 200  # Zoho max limit
-
+    
     while True:
         url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
         params = {
@@ -468,30 +468,31 @@ async def notion_webhook(request: Request):
 # -------------------- POLLING FALLBACK LOOP --------------------
 def poll_loop():
     logging.info("🚀 Starting Notion ↔ Zoho Smart Sync (polling mode)")
-    try:
-        token = get_zoho_access_token()
-        zoho_contacts = get_zoho_contacts(token)
-        notion_records = get_notion_records()
+    while True:
+        try:
+            token = get_zoho_access_token()
+            zoho_contacts = get_zoho_contacts(token)
+            notion_records = get_notion_records()
 
-        zoho_emails = {c.get("Email"): c for c in zoho_contacts if c.get("Email")}
-        notion_emails = {n.get("email"): n for n in notion_records if n.get("email")}
+            zoho_emails = {c.get("Email"): c for c in zoho_contacts if c.get("Email")}
+            notion_emails = {n.get("email"): n for n in notion_records if n.get("email")}
 
-        # Zoho → Notion
-        for email, contact in zoho_emails.items():
-            if email not in notion_emails:
-                create_or_update_notion(contact)
+            # Zoho → Notion
+            for email, contact in zoho_emails.items():
+                if email not in notion_emails:
+                    create_or_update_notion(contact)
 
-        # Notion → Zoho
-        # for email, record in notion_emails.items():
-        #     if email not in zoho_emails:
-        #         create_or_update_zoho(token, record)
+            # Notion → Zoho
+            # for email, record in notion_emails.items():
+            #     if email not in zoho_emails:
+            #         create_or_update_zoho(token, record)
 
-        logging.info("✅ Full sync cycle complete")
-        time.sleep(POLL_INTERVAL_SECONDS)
+            logging.info("✅ Full sync cycle complete")
+            time.sleep(POLL_INTERVAL_SECONDS)
 
-    except Exception as e:
-        logging.error(f"❌ Error in polling: {e}")
-        time.sleep(POLL_INTERVAL_SECONDS)
+        except Exception as e:
+            logging.error(f"❌ Error in polling: {e}")
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
