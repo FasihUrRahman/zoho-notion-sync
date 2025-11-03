@@ -128,6 +128,9 @@ def create_or_update_notion(zoho_contact):
         # First, try to find existing page by email
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
+        first_name = zoho_contact.get("First_Name", "")
+        last_name = zoho_contact.get("Last_Name", "")
+        full_name = f"{first_name} {last_name}".strip() or "Unknown"
         # if email not in ["baigali93@gmail.com", "dev.fasih@gmail.com"]:
         #     logging.info(f"Email is not allowed: {email}")
         #     return
@@ -148,7 +151,7 @@ def create_or_update_notion(zoho_contact):
         properties = {
             "Full Name": {
                 "rich_text": [{
-                    "text": {"content": zoho_contact.get("Full_Name", "") or "Unknown"}
+                    "text": {"content": full_name}
                 }]
             },
             "Company Name": {
@@ -480,9 +483,9 @@ def poll_loop():
                     create_or_update_notion(contact)
 
             # Notion → Zoho
-            for email, record in notion_emails.items():
-                if email not in zoho_emails:
-                    create_or_update_zoho(token, record)
+            # for email, record in notion_emails.items():
+            #     if email not in zoho_emails:
+            #         create_or_update_zoho(token, record)
 
             logging.info("✅ Full sync cycle complete")
             time.sleep(POLL_INTERVAL_SECONDS)
