@@ -50,24 +50,10 @@ def get_zoho_access_token():
         "client_secret": ZOHO_CLIENT_SECRET,
         "grant_type": "refresh_token"
     })
-    
-    print("\n🔍 [DEBUG] Request URL:", response.url)
-    print("🔍 [DEBUG] Status Code:", response.status_code)
-    print("🔍 [DEBUG] Response Text:", response.text, "\n")
-
-    try:
-        data = response.json()
-    except Exception:
-        logging.error("❌ Response is not valid JSON")
-        raise
-
-    if "access_token" not in data:
-        logging.error(f"❌ Unexpected token response: {data}")
-        raise KeyError("access_token")
-
+    response.raise_for_status()
+    token = response.json()["access_token"]
     logging.info("🔑 Got Zoho access token")
-    return data["access_token"]
-
+    return token
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
