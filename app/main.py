@@ -57,7 +57,7 @@ def get_zoho_access_token():
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
-    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Email,Phone,Company,Description,Contract_Status"
+    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Note,Description,Created_Time"
     response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
     response.raise_for_status()
     contacts = response.json().get("data", [])
