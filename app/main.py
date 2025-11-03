@@ -152,10 +152,21 @@ def create_or_update_notion(zoho_contact):
         notion_records = get_notion_records()
         email = zoho_contact.get("Email", "")
         partner_type = zoho_contact.get("Type_Of_Corporate_Partner", "")
+        mobile = zoho_contact.get("Mobile", "")
+        phone = zoho_contact.get("Phone", "")
+
 
         # ✅ Only sync Real Estate Agent or Property
         if partner_type not in ["Real Estate Agent", "Property"]:
             logging.info(f"⏭️ Skipped {zoho_contact.get('Full_Name', 'Unnamed')} ({partner_type}) — not eligible for sync")
+            return
+
+        if partner_type == "Real Estate Agent" and not mobile:
+            logging.info(f"🚫 Skipped Real Estate Agent (no Mobile): {zoho_contact.get('Full_Name', 'Unnamed')}")
+            return
+
+        if partner_type == "Principal" and not (mobile or phone):
+            logging.info(f"🚫 Skipped Property/Principal (no Mobile or Phone): {zoho_contact.get('Full_Name', 'Unnamed')}")
             return
 
         # Check if this contact already exists
@@ -172,7 +183,7 @@ def create_or_update_notion(zoho_contact):
         # Extract and clean Zoho fields
         full_name = zoho_contact.get("Full_Name") or "Unnamed Contact"
         email_val = zoho_contact.get("Email") or ""
-        phone = zoho_contact.get("Mobile") or ""
+        phone = zoho_contact.get("Mobile") or zoho_contact.get("Phone") or None
         description = zoho_contact.get("Description") or ""
         contact_status = zoho_contact.get("Contact_Status") or "To Be Contacted"
         lga_list = zoho_contact.get("Main_LGA_Serviced_By_RE_Agent") or []
