@@ -57,11 +57,11 @@ def get_zoho_access_token():
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
-    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=all"
+    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Email,Phone,Company,Description,Contract_Status"
     response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
     response.raise_for_status()
     contacts = response.json().get("data", [])
-    logging.info(f"📥 Fetched {contacts[0]} contacts from Zoho")
+    logging.info(f"📥 Fetched {contacts} contacts from Zoho")
     return contacts
 
 # -------------------- FETCH NOTION RECORDS --------------------
@@ -123,11 +123,16 @@ def fetch_notion_record(page_id):
     }
 
 # -------------------- CREATE/UPDATE IN NOTION --------------------
-# -------------------- CREATE/UPDATE IN NOTION (FIXED) --------------------
 def create_or_update_notion(zoho_contact):
     try:
         notion_records = get_notion_records()
-        email = zoho_contact.get("Email") or None
+        email = zoho_contact.get("Email", "")
+        partner_type = zoho_contact.get("Type_Of_Corporate_Partner", "")
+
+        # ✅ Skip if not Real Estate Agent or Property
+        if partner_type not in ["Real Estate Agent", "Property"]:
+            logging.info(f"⏭️ Skipped {zoho_contact.get('Full_Name', 'Unnamed')} ({partner_type}) — not eligible for sync")
+            return
 
         # Find existing Notion record by email
         existing_page = next((r for r in notion_records if r["email"] == email), None)
@@ -142,23 +147,22 @@ def create_or_update_notion(zoho_contact):
 
         # Extract and sanitize Zoho fields
         full_name = zoho_contact.get("Full_Name") or "Unnamed Contact"
-        company = zoho_contact.get("Company") or None
-        phone = zoho_contact.get("Phone") or None
-        description = zoho_contact.get("Description") or None
-        contract_status = zoho_contact.get("Contract_Status") or "To Be Contacted"
-        partner_type = zoho_contact.get("Type_Of_Partner") or "Real Estate Agent"
-        lga_serviced = zoho_contact.get("Mian_LGA_Serviced") or None
+        email_val = zoho_contact.get("Email") or ""
+        phone = zoho_contact.get("Mobile") or ""
+        description = zoho_contact.get("Description") or ""
+        contact_status = zoho_contact.get("Contact_Status") or "To Be Contacted"
+        lga_list = zoho_contact.get("Main_LGA_Serviced_By_RE_Agent") or []
+        lga_serviced = ", ".join(lga_list) if isinstance(lga_list, list) else str(lga_list)
 
-        # ✅ Properly typed Notion properties (no empty strings)
+        # Build Notion properties with correct field types
         properties = {
             "Full Name": {"title": [{"text": {"content": full_name}}]},
-            "Company Name": {"rich_text": [{"text": {"content": company}}]} if company else {"rich_text": []},
-            "Email": {"email": email},
+            "Email": {"email": email_val},
             "Phone Number": {"phone_number": phone},
-            "Contact Status": {"select": {"name": contract_status}},
+            "Contact Status": {"select": {"name": contact_status}},
             "Type of Corporate Partner": {"select": {"name": partner_type}},
-            "Main LGA Serviced By RE Agent": {"rich_text": [{"text": {"content": lga_serviced}}]} if lga_serviced else {"rich_text": []},
-            "Notes": {"rich_text": [{"text": {"content": description}}]} if description else {"rich_text": []},
+            "Main LGA Serviced By RE Agent": {"rich_text": [{"text": {"content": lga_serviced}}]},
+            "Notes": {"rich_text": [{"text": {"content": description}}]},
         }
 
         payload = (
@@ -169,19 +173,17 @@ def create_or_update_notion(zoho_contact):
 
         r = method(url, headers=NOTION_HEADERS, json=payload)
 
-        # ✅ Handle response properly
+        # Handle response
         if r.status_code in (200, 201):
             logging.info(f"✅ {log_action} Notion record for {full_name}")
         else:
-            error_text = r.text
-            if "is not a property that exists" in error_text:
+            if "is not a property that exists" in r.text:
                 logging.warning(f"⚠️ Skipped missing fields for {full_name}")
             else:
-                logging.error(f"❌ Failed to {log_action.lower()} in Notion: {error_text}")
+                logging.error(f"❌ Failed to {log_action.lower()} in Notion: {r.text}")
 
     except Exception as e:
         logging.error(f"❌ Error in create_or_update_notion: {e}")
-
 
 
 # -------------------- CREATE/UPDATE IN ZOHO --------------------
