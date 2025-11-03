@@ -57,12 +57,36 @@ def get_zoho_access_token():
 
 # -------------------- FETCH ZOHO CONTACTS --------------------
 def get_zoho_contacts(token):
-    url = f"{ZOHO_API_BASE}/crm/v3/Contacts?fields=Full_Name,Account_Name,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Note,Description,Created_Time"
-    response = requests.get(url, headers={"Authorization": f"Zoho-oauthtoken {token}"})
-    response.raise_for_status()
-    contacts = response.json().get("data", [])
-    logging.info(f"📥 Fetched {contacts} contacts from Zoho")
-    return contacts
+    all_contacts = []
+    page = 1
+    per_page = 200  # Zoho max limit
+    
+    while True:
+        url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
+        params = {
+            "fields": "Full_Name,Account_Name,Company,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Description,Created_Time",
+            "page": page,
+            "per_page": per_page
+        }
+        headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        contacts = data.get("data", [])
+        if not contacts:
+            break
+
+        all_contacts.extend(contacts)
+        logging.info(f"📥 Fetched page {page} ({len(contacts)} contacts)")
+        page += 1
+
+        # Stop if we reached the end
+        if len(contacts) < per_page:
+            break
+
+    logging.info(f"✅ Total fetched from Zoho: {len(all_contacts)} contacts")
+    return all_contacts
 
 # -------------------- FETCH NOTION RECORDS --------------------
 def get_notion_records():
