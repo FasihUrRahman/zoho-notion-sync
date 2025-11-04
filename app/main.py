@@ -80,7 +80,7 @@ def get_zoho_contacts(token):
     while True:
         url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
         params = {
-            "fields": "Full_Name,Account_Name,Company,Email,Mobile,Phone,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Description,Created_Time,Modified_Time",
+            "fields": "Full_Name,Account_Name,Company,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Description,Created_Time",
             "page": page,
             "per_page": per_page
         }
