@@ -390,7 +390,11 @@ def create_or_update_zoho(token, notion_record):
         if type_of_partner:
             contact_data["Type_Of_Corporate_Partner"] = type_of_partner
         if lga_serviced:
-            contact_data["Main_LGA_Serviced_By_RE_Agent"] = lga_serviced
+            if isinstance(lga_serviced, str):
+                # Convert to array for Zoho if it's a single string
+                contact_data["Main_LGA_Serviced_By_RE_Agent"] = [lga_serviced]
+            else:
+                contact_data["Main_LGA_Serviced_By_RE_Agent"] = lga_serviced
 
         if existing_contact:
             # Check if update is needed
