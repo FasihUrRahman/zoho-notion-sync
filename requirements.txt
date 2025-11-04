@@ -1,2 +1,5 @@
 requests
 python-dateutil
+python-dotenv
+fastapi
+uvicorn[standard]
