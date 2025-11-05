@@ -22,10 +22,8 @@ ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET")
 ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN")
 ZOHO_API_BASE = os.getenv("ZOHO_API_BASE", "https://www.zohoapis.com")
 ZOHO_ACCOUNTS_URL = os.getenv("ZOHO_ACCOUNTS_URL", "https://accounts.zoho.com")
-ZOHO_MODULE = "Contacts"
 
 POLL_LOOP = os.getenv("POLL_LOOP", "false").lower() == "true"
-POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
 
 # -------------------- LOGGING --------------------
 logging.basicConfig(
@@ -71,38 +69,6 @@ def get_notion_database_schema():
     
     return properties
 
-# -------------------- FETCH ZOHO CONTACTS --------------------
-def get_zoho_contacts(token):
-    all_contacts = []
-    page = 1
-    per_page = 200  # Zoho max limit
-    
-    while True:
-        url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
-        params = {
-            "fields": "Full_Name,Account_Name,Company,Email,Mobile,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Description,Created_Time",
-            "page": page,
-            "per_page": per_page
-        }
-        headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
-        contacts = data.get("data", [])
-        if not contacts:
-            break
-
-        all_contacts.extend(contacts)
-        logging.info(f"📥 Fetched page {page} ({len(contacts)} contacts)")
-        page += 1
-
-        if len(contacts) < per_page:
-            break
-
-    logging.info(f"✅ Total fetched from Zoho: {len(all_contacts)} contacts")
-    return all_contacts
-
 # -------------------- FETCH NOTION RECORDS --------------------
 def get_notion_records():
     """Fetch all records from Notion database with pagination support"""
@@ -146,8 +112,6 @@ def get_notion_records():
             select = prop.get("select")
             return select.get("name", default) if select else default
         
-        last_edited = item.get("last_edited_time", "")
-        
         records.append({
             "id": item["id"],
             "name": get_title_content(props.get("Full Name", {})) or get_rich_text_content(props.get("Full Name", {})),
@@ -158,7 +122,7 @@ def get_notion_records():
             "type_of_partner": get_select_name(props.get("Type of Corporate Partner", {})),
             "note": get_rich_text_content(props.get("Note", {}) or props.get("Notes", {})),
             "lga_serviced": get_rich_text_content(props.get("Main LGA Serviced By RE Agent", {})),
-            "last_edited_time": last_edited,
+            "zoho_user_id": get_rich_text_content(props.get("ZohoUserId", {})),
         })
     
     logging.info(f"📩 Processed {len(records)} Notion records")
@@ -199,17 +163,41 @@ def fetch_notion_record(page_id):
         "note": get_rich_text_content(props.get("Note", {}) or props.get("Notes", {})),
         "type_of_partner": get_select_name(props.get("Type of Corporate Partner", {})),
         "lga_serviced": get_rich_text_content(props.get("Main LGA Serviced By RE Agent", {})),
+        "zoho_user_id": get_rich_text_content(props.get("ZohoUserId", {})),
     }
 
-# -------------------- CREATE/UPDATE IN NOTION (FOR WEBHOOKS) --------------------
-def create_or_update_notion_webhook(webhook_data, notion_schema=None):
+# -------------------- UPDATE NOTION RECORD WITH ZOHO ID --------------------
+def update_notion_zoho_id(notion_page_id, zoho_id):
+    """Update a Notion record with Zoho ID"""
+    try:
+        url = f"https://api.notion.com/v1/pages/{notion_page_id}"
+        payload = {
+            "properties": {
+                "ZohoUserId": {"rich_text": [{"text": {"content": zoho_id}}]}
+            }
+        }
+        
+        r = requests.patch(url, headers=NOTION_HEADERS, json=payload)
+        if r.status_code in (200, 201):
+            logging.info(f"✅ Updated Notion record with Zoho ID: {zoho_id}")
+            return True
+        else:
+            logging.error(f"❌ Failed to update Notion with Zoho ID: {r.text}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"❌ Error updating Notion with Zoho ID: {e}")
+        return False
+
+# -------------------- CREATE/UPDATE IN NOTION (ZOHO → NOTION) --------------------
+def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
     """
     Handle Zoho webhook and sync to Notion.
-    Uses the webhook payload format from Zoho.
-    Only updates if data has actually changed.
+    Uses Zoho ID for matching records.
     """
     try:
         # Extract data from Zoho webhook format
+        zoho_id = webhook_data.get("Id", "")
         first_name = webhook_data.get("FirstName", "")
         last_name = webhook_data.get("LastName", "")
         full_name = f"{first_name} {last_name}".strip() or "Unnamed Contact"
@@ -234,19 +222,20 @@ def create_or_update_notion_webhook(webhook_data, notion_schema=None):
             logging.info(f"⏭️ Skipped {full_name} ({partner_type}) — not eligible for sync")
             return {"status": "skipped", "reason": "not_eligible"}
 
-        # ✅ Skip contacts without email
-        if not email_val:
-            logging.warning(f"⚠️ Skipping {full_name} - No email address")
-            return {"status": "skipped", "reason": "no_email"}
+        # ✅ Skip if no Zoho ID
+        if not zoho_id:
+            logging.warning(f"⚠️ Skipping {full_name} - No Zoho ID")
+            return {"status": "skipped", "reason": "no_zoho_id"}
 
-        # Check if this contact already exists
+        # Check if this contact already exists by Zoho ID
         notion_records = get_notion_records()
-        existing_page = next((r for r in notion_records if r["email"] == email_val), None)
+        existing_page = next((r for r in notion_records if r["zoho_user_id"] == zoho_id), None)
         
         # ✅ Check if data has actually changed (skip unnecessary updates)
         if existing_page:
             needs_update = (
                 existing_page.get("name") != full_name or
+                existing_page.get("email") != email_val or
                 existing_page.get("phone") != phone_number or
                 existing_page.get("company") != company_name or
                 existing_page.get("contract_status") != contact_status or
@@ -283,6 +272,10 @@ def create_or_update_notion_webhook(webhook_data, notion_schema=None):
         if phone_number:
             properties["Phone Number"] = {"phone_number": phone_number}
         
+        # Zoho ID - Always add this
+        if "ZohoUserId" in notion_schema:
+            properties["ZohoUserId"] = {"rich_text": [{"text": {"content": zoho_id}}]}
+        
         # Only add fields that exist in schema
         if notion_schema:
             if "Contact Status" in notion_schema and contact_status:
@@ -318,21 +311,22 @@ def create_or_update_notion_webhook(webhook_data, notion_schema=None):
         r = method(url, headers=NOTION_HEADERS, json=payload)
 
         if r.status_code in (200, 201):
-            logging.info(f"✅ {log_action} Notion record for {full_name}")
+            logging.info(f"✅ {log_action} Notion record for {full_name} (Zoho ID: {zoho_id})")
             return {"status": "success", "action": log_action.lower()}
         else:
             logging.error(f"❌ Failed to {log_action.lower()} {full_name}: {r.text}")
             return {"status": "error", "details": r.text}
 
     except Exception as e:
-        logging.error(f"❌ Error in create_or_update_notion_webhook: {e}")
+        logging.error(f"❌ Error in create_or_update_notion_from_zoho: {e}")
         return {"status": "error", "message": str(e)}
 
-# -------------------- CREATE/UPDATE IN ZOHO (FOR NOTION WEBHOOKS) --------------------
-def create_or_update_zoho(token, notion_record):
+# -------------------- CREATE/UPDATE IN ZOHO (NOTION → ZOHO) --------------------
+def create_or_update_zoho_from_notion(token, notion_record):
     """
     Sync Notion record to Zoho.
-    Only updates if data has actually changed.
+    If Notion has ZohoUserId, update that record in Zoho.
+    If not, create new record in Zoho and update Notion with the Zoho ID.
     """
     try:
         full_name = (notion_record.get("name") or "").strip()
@@ -343,32 +337,24 @@ def create_or_update_zoho(token, notion_record):
         note = notion_record.get("note", "")
         type_of_partner = notion_record.get("type_of_partner", "")
         lga_serviced = notion_record.get("lga_serviced", "")
+        zoho_user_id = notion_record.get("zoho_user_id", "")
+        notion_page_id = notion_record.get("id", "")
 
         # Skip if no email
-        if not email:
-            logging.warning(f"⚠️ Skipping {full_name} - No email address")
-            return
+        # if not email:
+        #     logging.warning(f"⚠️ Skipping {full_name} - No email address")
+        #     return
 
         # Split name
         if " " in full_name:
             first_name, last_name = full_name.split(" ", 1)
         else:
-            first_name, last_name = "", full_name or "Unknown"
+            first_name, last_name = full_name, ""
 
         headers = {
             "Authorization": f"Zoho-oauthtoken {token}",
             "Content-Type": "application/json"
         }
-
-        # Check if contact exists in Zoho
-        search_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/search?email={email}"
-        search_response = requests.get(search_url, headers=headers)
-        
-        existing_contact = None
-        if search_response.status_code == 200:
-            data = search_response.json().get("data", [])
-            if data:
-                existing_contact = data[0]
 
         # Prepare payload
         contact_data = {
@@ -391,31 +377,14 @@ def create_or_update_zoho(token, notion_record):
             contact_data["Type_Of_Corporate_Partner"] = type_of_partner
         if lga_serviced:
             if isinstance(lga_serviced, str):
-                # Convert to array for Zoho if it's a single string
                 contact_data["Main_LGA_Serviced_By_RE_Agent"] = [lga_serviced]
             else:
                 contact_data["Main_LGA_Serviced_By_RE_Agent"] = lga_serviced
 
-        if existing_contact:
-            # Check if update is needed
-            existing_id = existing_contact["id"]
-            needs_update = (
-                existing_contact.get("First_Name") != first_name or
-                existing_contact.get("Last_Name") != last_name or
-                existing_contact.get("Mobile") != phone or
-                existing_contact.get("Company") != company or
-                existing_contact.get("Contact_Status") != contract_status or
-                existing_contact.get("Type_Of_Corporate_Partner") != type_of_partner or
-                existing_contact.get("Description") != note
-            )
-            
-            if not needs_update:
-                logging.info(f"⏭️ No changes detected in Zoho for {full_name} - skipping update")
-                return
-
-            # Update existing contact
-            logging.info(f"✏️ Updating existing Zoho contact: {email} ({existing_id})")
-            update_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/{existing_id}"
+        if zoho_user_id:
+            # UPDATE existing Zoho contact
+            logging.info(f"✏️ Updating existing Zoho contact: {email} (Zoho ID: {zoho_user_id})")
+            update_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/{zoho_user_id}"
             update_payload = {"data": [contact_data]}
             
             r = requests.put(update_url, headers=headers, json=update_payload)
@@ -424,56 +393,59 @@ def create_or_update_zoho(token, notion_record):
             else:
                 logging.error(f"❌ Failed to update Zoho contact: {r.text}")
         else:
-            # Create new contact
+            # CREATE new Zoho contact
             logging.info(f"➕ Creating new Zoho contact: {email}")
             create_url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
             create_payload = {"data": [contact_data]}
             
             r = requests.post(create_url, headers=headers, json=create_payload)
             if r.status_code in (200, 201):
-                logging.info(f"🆕 Created Zoho contact: {full_name}")
+                response_data = r.json()
+                # Extract the new Zoho ID
+                if response_data.get("data") and len(response_data["data"]) > 0:
+                    new_zoho_id = response_data["data"][0].get("details", {}).get("id")
+                    if new_zoho_id:
+                        logging.info(f"🆕 Created Zoho contact: {full_name} (Zoho ID: {new_zoho_id})")
+                        
+                        # Update Notion with the new Zoho ID
+                        if notion_page_id:
+                            update_notion_zoho_id(notion_page_id, new_zoho_id)
+                    else:
+                        logging.warning(f"⚠️ Created Zoho contact but couldn't extract ID")
+                else:
+                    logging.warning(f"⚠️ Unexpected Zoho response format: {response_data}")
             else:
                 logging.error(f"❌ Failed to create Zoho contact: {r.text}")
 
     except Exception as e:
-        logging.error(f"❌ Error in create_or_update_zoho: {e}")
+        logging.error(f"❌ Error in create_or_update_zoho_from_notion: {e}")
 
 # -------------------- DELETE CONTACT FROM ZOHO --------------------
 def delete_contact_from_zoho(token, notion_record):
-    """Delete contact from Zoho"""
+    """Delete contact from Zoho using Zoho ID"""
     try:
         email = notion_record.get("email", "")
-        if not email:
-            logging.warning("⚠️ Cannot delete - no email provided")
-            return
+        zoho_user_id = notion_record.get("zoho_user_id", "")
+        
+        if not zoho_user_id:
+            logging.warning("⚠️ Cannot delete - no Zoho ID provided")
+            return False
 
         headers = {
             "Authorization": f"Zoho-oauthtoken {token}",
             "Content-Type": "application/json"
         }
         
-        # Search for contact
-        search_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/search?email={email}"
-        search_response = requests.get(search_url, headers=headers)
+        logging.info(f"🗑️  Deleting Zoho contact: {email} (Zoho ID: {zoho_user_id})")
+        delete_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/{zoho_user_id}"
+        response = requests.delete(delete_url, headers=headers)
         
-        if search_response.status_code == 200:
-            data = search_response.json().get("data", [])
-            if data:
-                existing_contact_id = data[0]["id"]
-                logging.info(f"🗑️  Deleting Zoho contact: {email} ({existing_contact_id})")
-
-                delete_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/{existing_contact_id}"
-                response = requests.delete(delete_url, headers=headers)
-                
-                if response.status_code in (200, 202, 204):
-                    logging.info(f"✅ Deleted Zoho contact: {email}")
-                    return True
-                else:
-                    logging.error(f"❌ Failed to delete Zoho contact: {response.text}")
-                    return False
-        
-        logging.info(f"ℹ️ Contact not found in Zoho: {email}")
-        return False
+        if response.status_code in (200, 202, 204):
+            logging.info(f"✅ Deleted Zoho contact: {email}")
+            return True
+        else:
+            logging.error(f"❌ Failed to delete Zoho contact: {response.text}")
+            return False
         
     except Exception as e:
         logging.error(f"❌ Error deleting from Zoho: {e}")
@@ -546,80 +518,6 @@ def delete_all_notion_records():
         logging.error(f"❌ Critical error during deletion: {e}")
         raise
 
-# -------------------- POLLING SYNC LOOP --------------------
-def poll_loop():
-    """One-time sync: Transfer ALL data from Zoho → Notion"""
-    logging.info("🚀 Starting ONE-TIME Zoho → Notion sync (polling mode)")
-    try:
-        # Delete all existing records
-        delete_all_notion_records()
-        logging.info("\n" + "=" * 60)
-        logging.info("🔄 Starting fresh sync from Zoho...")
-        logging.info("=" * 60 + "\n")
-        
-        # Get Notion database schema
-        logging.info("📋 Fetching Notion database schema...")
-        notion_schema = get_notion_database_schema()
-        
-        # Get Zoho access token
-        token = get_zoho_access_token()
-        
-        # Fetch all contacts from Zoho
-        logging.info("📥 Fetching all Zoho contacts...")
-        zoho_contacts = get_zoho_contacts(token)
-        
-        # Filter eligible contacts
-        eligible_contacts = [
-            c for c in zoho_contacts 
-            if c.get("Type_Of_Corporate_Partner") in ["Real Estate Agent", "Principal"] 
-            and c.get("Email")
-        ]
-        
-        logging.info(f"📊 Found {len(eligible_contacts)} eligible contacts with emails")
-        
-        synced_count = 0
-        error_count = 0
-        
-        for idx, contact in enumerate(eligible_contacts, 1):
-            try:
-                # Transform Zoho format to webhook format
-                webhook_format = {
-                    "FirstName": contact.get("Full_Name", "").split(" ")[0] if contact.get("Full_Name") else "",
-                    "LastName": " ".join(contact.get("Full_Name", "").split(" ")[1:]) if contact.get("Full_Name") and len(contact.get("Full_Name", "").split(" ")) > 1 else "",
-                    "Email": contact.get("Email"),
-                    "Mobile": contact.get("Mobile"),
-                    "Phone": contact.get("Phone"),
-                    "CompanyName": contact.get("Account_Name", {}).get("name", "") if isinstance(contact.get("Account_Name"), dict) else contact.get("Company", ""),
-                    "ContactStatus": contact.get("Contact_Status", "To Be Contacted"),
-                    "TypeOfCorporatePartner": contact.get("Type_Of_Corporate_Partner", ""),
-                    "MainLGAServicedByREAgent": contact.get("Main_LGA_Serviced_By_RE_Agent", "")
-                }
-                
-                logging.info(f"🔄 Processing {idx}/{len(eligible_contacts)}: {contact.get('Full_Name', 'Unnamed')}")
-                result = create_or_update_notion_webhook(webhook_format, notion_schema)
-                
-                if result.get("status") == "success":
-                    synced_count += 1
-                
-                time.sleep(0.3)
-                
-            except Exception as e:
-                error_count += 1
-                logging.error(f"❌ Failed to sync {contact.get('Full_Name', 'Unknown')}: {e}")
-        
-        logging.info("=" * 60)
-        logging.info(f"✅ SYNC COMPLETE!")
-        logging.info(f"📊 Summary:")
-        logging.info(f"   - Total Zoho contacts: {len(zoho_contacts)}")
-        logging.info(f"   - Eligible for sync: {len(eligible_contacts)}")
-        logging.info(f"   - Successfully synced: {synced_count}")
-        logging.info(f"   - Errors: {error_count}")
-        logging.info("=" * 60)
-        
-    except Exception as e:
-        logging.error(f"❌ Critical error in polling: {e}")
-        raise
-
 # ==================== FASTAPI WEBHOOK SERVER ====================
 app = FastAPI()
 
@@ -627,6 +525,8 @@ app = FastAPI()
 async def root():
     return {
         "status": "Zoho ↔ Notion Two-Way Sync Server",
+        "version": "3.0",
+        "features": ["Zoho ID tracking", "Email change support", "Two-way sync"],
         "endpoints": {
             "zoho_create_update": "/webhooks/zoho",
             "zoho_delete": "/webhooks/zoho-delete",
@@ -645,7 +545,7 @@ async def zoho_webhook(request: Request):
         logging.info(f"🔔 Action: {action}")
         
         # Sync to Notion
-        result = create_or_update_notion_webhook(data)
+        result = create_or_update_notion_from_zoho(data)
         
         return {"status": "ok", "result": result}
 
@@ -660,26 +560,27 @@ async def zoho_delete_webhook(request: Request):
         data = await request.json()
         logging.info(f"🗑️ Received Zoho delete webhook: {data}")
 
-        email = data.get("email") or data.get("Email")
-        if not email:
-            logging.warning("⚠️ Delete webhook missing email field, skipping.")
-            return {"status": "skipped", "reason": "no_email"}
+        zoho_id = data.get("ZohoId")
+        
+        if not zoho_id:
+            logging.warning("⚠️ Delete webhook missing Zoho ID field, skipping.")
+            return {"status": "skipped", "reason": "no_zoho_id"}
 
         # Fetch all records from Notion
         notion_records = get_notion_records()
-        record_to_delete = next((r for r in notion_records if r.get("email") == email), None)
+        record_to_delete = next((r for r in notion_records if r.get("zoho_user_id") == zoho_id), None)
 
         if not record_to_delete:
-            logging.info(f"ℹ️ No matching Notion record found for {email}")
-            return {"status": "not_found", "email": email}
+            logging.info(f"ℹ️ No matching Notion record found for Zoho ID: {zoho_id}")
+            return {"status": "not_found", "zoho_id": zoho_id}
 
         page_id = record_to_delete["id"]
         delete_url = f"https://api.notion.com/v1/pages/{page_id}"
         r = requests.patch(delete_url, headers=NOTION_HEADERS, json={"archived": True})
 
         if r.status_code in (200, 204):
-            logging.info(f"✅ Deleted Notion record for {email}")
-            return {"status": "ok", "email": email}
+            logging.info(f"✅ Deleted Notion record for Zoho ID: {zoho_id}")
+            return {"status": "ok", "zoho_id": zoho_id}
         else:
             logging.error(f"❌ Failed to delete Notion record: {r.text}")
             return {"status": "error", "details": r.text}
@@ -724,16 +625,13 @@ async def notion_webhook(request: Request):
             token = get_zoho_access_token()
             
             # Sync to Zoho
-            create_or_update_zoho(token, notion_record)
+            create_or_update_zoho_from_notion(token, notion_record)
             logging.info(f"✅ Synced Notion → Zoho for page {page_id}")
             
             return {"status": "ok", "action": "synced_to_zoho"}
 
         elif event_type == "page.deleted":
             logging.info(f"🗑️ Page deleted: {page_id}")
-            
-            # Note: Deleted pages can't be fetched, so we'd need to handle this differently
-            # For now, we'll just log it
             logging.info(f"ℹ️ Notion page deleted - Zoho record not automatically deleted")
             
             return {"status": "ok", "action": "deleted_from_notion"}
@@ -746,23 +644,170 @@ async def notion_webhook(request: Request):
         logging.error(f"❌ Error handling Notion webhook: {e}")
         return {"status": "error", "message": str(e)}
 
+def get_zoho_contacts(token):
+    all_contacts = []
+    page = 1
+    per_page = 200  # Zoho max limit
+    
+    while True:
+        url = f"{ZOHO_API_BASE}/crm/v3/Contacts"
+        params = {
+            "fields": "id,Full_Name,Account_Name,Company,Email,Mobile,Phone,Contact_Status,Type_Of_Corporate_Partner,Main_LGA_Serviced_By_RE_Agent,Description,NotionZohoId,Created_Time,Modified_Time",
+            "page": page,
+            "per_page": per_page
+        }
+        headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        contacts = data.get("data", [])
+        if not contacts:
+            break
+
+        all_contacts.extend(contacts)
+        logging.info(f"📥 Fetched page {page} ({len(contacts)} contacts)")
+        page += 1
+
+        if len(contacts) < per_page:
+            break
+
+    logging.info(f"✅ Total fetched from Zoho: {len(all_contacts)} contacts")
+    return all_contacts
+
+# -------------------- POLLING SYNC LOOP WITH UUID SYNC --------------------
+def poll_loop():
+    """
+    Enhanced sync with UUID management:
+    1. Delete all Notion records
+    2. For each Zoho contact:
+       - Generate UUID
+       - Update Zoho with UUID
+       - Create Notion record with UUID
+    """
+    logging.info("🚀 Starting ENHANCED Zoho → Notion sync with UUID management")
+    try:
+        # STEP 1: Delete all existing records
+        # delete_all_notion_records()
+        # logging.info("\n" + "=" * 60)
+        # logging.info("🔄 Starting fresh sync from Zoho with UUID sync...")
+        # logging.info("=" * 60 + "\n")
+        # return
+        # STEP 2: Get Notion database schema
+        logging.info("📋 Fetching Notion database schema...")
+        notion_schema = get_notion_database_schema()
+        # return
+        # Check if NotionZohoId field exists
+        if "ZohoUserId" not in notion_schema:
+            logging.error("❌ CRITICAL: 'NotionZohoId' field not found in Notion database!")
+            logging.error("Please add a 'NotionZohoId' field (type: Text) to your Notion database.")
+            return
+        # STEP 3: Get Zoho access token
+        token = get_zoho_access_token()
+        
+        # STEP 4: Fetch all contacts from Zoho
+        logging.info("📥 Fetching all Zoho contacts...")
+        zoho_contacts = get_zoho_contacts(token)
+        logging.info(f"✅ Zoho Contact: {zoho_contacts[0]}")
+        logging.info(f"✅ Fetched all Zoho contacts. Processing... {len(zoho_contacts)}")
+        return
+        # STEP 5: Filter eligible contacts
+        eligible_contacts = [
+            c for c in zoho_contacts 
+            if c.get("Type_Of_Corporate_Partner") in ["Real Estate Agent", "Principal"]
+        ]
+        
+        logging.info(f"📊 Found {len(eligible_contacts)} eligible contacts with emails")
+        logging.info("\n" + "=" * 60)
+        logging.info("🔄 PHASE 1: Syncing UUIDs and creating Notion records")
+        logging.info("=" * 60 + "\n")
+        
+        synced_count = 0
+        error_count = 0
+        uuid_update_count = 0
+        
+        for idx, contact in enumerate(eligible_contacts, 1):
+            try:
+                zoho_id = contact.get("id")
+                existing_uuid = zoho_id
+                full_name = contact.get("Full_Name", "Unnamed")
+                
+                # Generate or use existing UUID
+                sync_uuid = existing_uuid if existing_uuid else str(uuid.uuid4())
+                
+                logging.info(f"🔄 Processing {idx}/{len(eligible_contacts)}: {full_name}")
+                
+                # STEP A: Update Zoho with UUID (if it doesn't have one)
+                # if not existing_uuid:
+                #     logging.info(f"   📝 Updating Zoho with new UUID: {sync_uuid}")
+                #     if update_zoho_contact_uuid(token, zoho_id, sync_uuid):
+                #         uuid_update_count += 1
+                #         # Small delay after updating Zoho
+                #         time.sleep(0.2)
+                #     else:
+                #         logging.warning(f"   ⚠️ Failed to update UUID in Zoho, but continuing...")
+                # else:
+                #     logging.info(f"   ✓ Using existing UUID: {sync_uuid}")
+                
+                # # STEP B: Create record in Notion with UUID
+                # logging.info(f"   📝 Creating Notion record with UUID...")
+                notion_page_id = create_notion_record_with_uuid(contact, sync_uuid, notion_schema)
+                
+                if notion_page_id:
+                    synced_count += 1
+                    logging.info(f"   ✅ Successfully synced {full_name}")
+                else:
+                    error_count += 1
+                    logging.error(f"   ❌ Failed to create Notion record for {full_name}")
+                
+                # Rate limiting
+                time.sleep(0.3)
+                
+                # Progress update every 50 records
+                if idx % 50 == 0:
+                    logging.info(f"\n📊 Progress: {idx}/{len(eligible_contacts)} processed\n")
+                
+            except Exception as e:
+                error_count += 1
+                logging.error(f"❌ Failed to sync {contact.get('Full_Name', 'Unknown')}: {e}")
+        
+        # Final summary
+        logging.info("\n" + "=" * 60)
+        logging.info(f"✅ SYNC COMPLETE!")
+        logging.info("=" * 60)
+        logging.info(f"📊 Summary:")
+        logging.info(f"   - Total Zoho contacts: {len(zoho_contacts)}")
+        logging.info(f"   - Eligible for sync: {len(eligible_contacts)}")
+        logging.info(f"   - UUIDs updated in Zoho: {uuid_update_count}")
+        logging.info(f"   - Successfully synced to Notion: {synced_count}")
+        logging.info(f"   - Errors: {error_count}")
+        logging.info("=" * 60)
+        logging.info("\n✅ All records now have matching UUIDs in both Zoho and Notion!")
+        logging.info("🔔 Email changes will now update existing records instead of creating duplicates.")
+        
+    except Exception as e:
+        logging.error(f"❌ Critical error in polling: {e}")
+        raise
+
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
     if POLL_LOOP:
-        # Run one-time sync
+        # Run one-time sync with UUID management
         poll_loop()
         logging.info("\n" + "=" * 60)
-        logging.info("✅ Initial sync complete!")
+        logging.info("✅ Initial sync with UUID management complete!")
         logging.info("💡 Set POLL_LOOP=false in .env and restart to enable webhook mode")
         logging.info("=" * 60)
     else:
         # Run webhook server
-        logging.info("🚀 Starting Webhook Server...")
+        logging.info("🚀 Starting Webhook Server (UUID-based sync)...")
         logging.info("📡 Listening for webhooks on http://0.0.0.0:3000")
         logging.info("=" * 60)
         logging.info("Webhook URLs:")
-        logging.info("  Zoho Create/Update: http://localhost:3000/webhooks/zoho")
-        logging.info("  Zoho Delete:        http://localhost:3000/webhooks/zoho-delete")
-        logging.info("  Notion:             http://localhost:3000/webhooks/notion")
+        logging.info("  Zoho Create/Update: http://your-domain:3000/webhooks/zoho")
+        logging.info("  Zoho Delete:        http://your-domain:3000/webhooks/zoho-delete")
+        logging.info("  Notion:             http://your-domain:3000/webhooks/notion")
+        logging.info("=" * 60)
+        logging.info("🆔 UUID-based matching enabled - Email changes will update existing records")
         logging.info("=" * 60)
         uvicorn.run(app, host="0.0.0.0", port=3000)
