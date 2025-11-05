@@ -7,6 +7,8 @@ services:
     env_file: .env
     volumes:
       - ./app:/app/app
+    ports:
+      - "8000:3000"  # Make sure this line exists
     logging:
       driver: "json-file"
       options:
