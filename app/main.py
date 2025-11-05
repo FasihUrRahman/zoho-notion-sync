@@ -212,6 +212,7 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
         contact_status = webhook_data.get("ContactStatus", "") or "To Be Contacted"
         partner_type = webhook_data.get("TypeOfCorporatePartner", "")
         lga_serviced = webhook_data.get("MainLGAServicedByREAgent", "")
+        note = webhook_data.get("Description", "")
         
         # Convert list to string if needed
         if isinstance(lga_serviced, list):
@@ -240,7 +241,8 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
                 existing_page.get("company") != company_name or
                 existing_page.get("contract_status") != contact_status or
                 existing_page.get("type_of_partner") != partner_type or
-                existing_page.get("lga_serviced") != lga_serviced
+                existing_page.get("lga_serviced") != lga_serviced or
+                existing_page.get("note") != note
             )
             
             if not needs_update:
@@ -287,11 +289,9 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
             if "Main LGA Serviced By RE Agent" in notion_schema and lga_serviced:
                 properties["Main LGA Serviced By RE Agent"] = {"rich_text": [{"text": {"content": lga_serviced}}]}
             
-            if "Note" in notion_schema:
-                properties["Note"] = {"rich_text": [{"text": {"content": ""}}]}
-            elif "Notes" in notion_schema:
-                properties["Notes"] = {"rich_text": [{"text": {"content": ""}}]}
-            
+            if "Notes" in notion_schema:
+                properties["Notes"] = {"rich_text": [{"text": {"content": note}}]}
+
             if company_name and "Company Name" in notion_schema:
                 properties["Company Name"] = {"rich_text": [{"text": {"content": company_name}}]}
 
