@@ -1,2 +1,6 @@
 .env
-
+venv/
+app/venv/
+__pycache__/
+*.pyc
+*.db
