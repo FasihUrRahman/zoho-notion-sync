@@ -121,7 +121,7 @@ def get_notion_records():
             "contract_status": get_select_name(props.get("Contact Status", {})),
             "type_of_partner": get_select_name(props.get("Type of Corporate Partner", {})),
             "note": get_rich_text_content(props.get("Note", {}) or props.get("Notes", {})),
-            "lga_serviced": get_rich_text_content(props.get("Main LGA Serviced By RE Agent", {})),
+            "lga_serviced": ", ".join([ item["name"] for item in props.get("Main LGA Serviced By RE Agent", {}).get("multi_select", []) ]),
             "zoho_user_id": get_rich_text_content(props.get("ZohoUserId", {})),
         })
     
@@ -162,7 +162,7 @@ def fetch_notion_record(page_id):
         "contract_status": get_select_name(props.get("Contact Status", {})),
         "note": get_rich_text_content(props.get("Note", {}) or props.get("Notes", {})),
         "type_of_partner": get_select_name(props.get("Type of Corporate Partner", {})),
-        "lga_serviced": get_rich_text_content(props.get("Main LGA Serviced By RE Agent", {})),
+        "lga_serviced": ", ".join([ item["name"] for item in props.get("Main LGA Serviced By RE Agent", {}).get("multi_select", []) ]),
         "zoho_user_id": get_rich_text_content(props.get("ZohoUserId", {})),
     }
 
@@ -287,7 +287,7 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
                 properties["Type of Corporate Partner"] = {"select": {"name": partner_type}}
             
             if "Main LGA Serviced By RE Agent" in notion_schema and lga_serviced:
-                properties["Main LGA Serviced By RE Agent"] = {"rich_text": [{"text": {"content": lga_serviced}}]}
+                properties["Main LGA Serviced By RE Agent"] = { "multi_select": [{"name": name.strip()} for name in lga_serviced.split(",") if name.strip()] }
             
             if "Notes" in notion_schema:
                 properties["Notes"] = {"rich_text": [{"text": {"content": note}}]}
@@ -350,6 +350,9 @@ def create_or_update_zoho_from_notion(token, notion_record):
             first_name, last_name = full_name.split(" ", 1)
         else:
             first_name, last_name = full_name, ""
+
+        if last_name is None:
+            last_name = "Default"
 
         headers = {
             "Authorization": f"Zoho-oauthtoken {token}",
@@ -696,7 +699,7 @@ def poll_loop():
         # STEP 2: Get Notion database schema
         logging.info("📋 Fetching Notion database schema...")
         notion_schema = get_notion_database_schema()
-        # return
+        return
         # Check if NotionZohoId field exists
         if "ZohoUserId" not in notion_schema:
             logging.error("❌ CRITICAL: 'NotionZohoId' field not found in Notion database!")
