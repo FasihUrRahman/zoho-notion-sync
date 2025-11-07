@@ -548,9 +548,30 @@ async def zoho_webhook(request: Request):
         logging.info(f"🔔 Action: {action}")
         
         # Sync to Notion
-        result = create_or_update_notion_from_zoho(data)
-        
-        return {"status": "ok", "result": result}
+        if action in ["create", "update", "create/update"]:
+            result = create_or_update_notion_from_zoho(data)
+            return {"status": "ok", "result": result}
+        elif action == "delete":
+            logging.info("🗑️ Delete action received - use /webhooks/zoho-delete endpoint")
+            zoho_id = data.get("id")
+
+            notion_records = get_notion_records()
+            record_to_delete = next((r for r in notion_records if r.get("zoho_user_id") == zoho_id), None)
+
+            if not record_to_delete:
+                logging.info(f"ℹ️ No matching Notion record found for Zoho ID: {zoho_id}")
+                return {"status": "not_found", "zoho_id": zoho_id}
+
+            page_id = record_to_delete["id"]
+            delete_url = f"https://api.notion.com/v1/pages/{page_id}"
+            r = requests.patch(delete_url, headers=NOTION_HEADERS, json={"archived": True})
+
+            if r.status_code in (200, 204):
+                logging.info(f"✅ Deleted Notion record for Zoho ID: {zoho_id}")
+                return {"status": "ok", "zoho_id": zoho_id}
+            else:
+                logging.error(f"❌ Failed to delete Notion record: {r.text}")
+                return {"status": "error", "details": r.text}
 
     except Exception as e:
         logging.error(f"❌ Zoho → Notion sync failed: {e}")
