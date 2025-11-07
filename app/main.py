@@ -173,7 +173,7 @@ def update_notion_zoho_id(notion_page_id, zoho_id):
         url = f"https://api.notion.com/v1/pages/{notion_page_id}"
         payload = {
             "properties": {
-                "ZohoUserId": {"rich_text": [{"text": {"content": zoho_id}}]}
+                "ZohoUserId": {"rich_text": [{"text": {"content": str(zoho_id)}}]}
             }
         }
         
