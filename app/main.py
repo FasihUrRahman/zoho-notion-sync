@@ -287,7 +287,7 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
                 properties["Type of Corporate Partner"] = {"select": {"name": partner_type}}
             
             if "Main LGA Serviced By RE Agent" in notion_schema and lga_serviced:
-                properties["Main LGA Serviced By RE Agent"] = { "multi_select": [{"name": name.strip()} for name in lga_serviced.split(",") if name.strip()] }
+                properties["Main LGA Serviced By RE Agent"] = { "multi_select": [{"name": name.strip()} for name in lga_serviced.split(";") if name.strip()] }
             
             if "Notes" in notion_schema:
                 properties["Notes"] = {"rich_text": [{"text": {"content": note}}]}
