@@ -657,6 +657,12 @@ async def notion_webhook(request: Request):
         elif event_type == "page.deleted":
             logging.info(f"🗑️ Page deleted: {page_id}")
             logging.info(f"ℹ️ Notion page deleted - Zoho record not automatically deleted")
+            logging.info(f"📝 Page {event_type}: {page_id}")
+            # (Optional) Fetch Notion data & sync with Zoho
+            notion_record = fetch_notion_record(page_id)
+            # logging.info(f"✅ Notion Record: {notion_record}")
+            token = get_zoho_access_token()
+            delete_contact_from_zoho(token, notion_record)
             
             return {"status": "ok", "action": "deleted_from_notion"}
 
