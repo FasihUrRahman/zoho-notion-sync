@@ -351,9 +351,6 @@ def create_or_update_zoho_from_notion(token, notion_record):
         else:
             first_name, last_name = full_name, ""
 
-        if last_name is None:
-            last_name = "Default"
-
         headers = {
             "Authorization": f"Zoho-oauthtoken {token}",
             "Content-Type": "application/json"
@@ -362,9 +359,12 @@ def create_or_update_zoho_from_notion(token, notion_record):
         # Prepare payload
         contact_data = {
             "First_Name": first_name,
-            "Last_Name": last_name or first_name or "Unknown",
+            "Last_Name": last_name or first_name,
             "Email": email,
         }
+
+        if last_name is None:
+            return
         
         # Only add fields if they have values
         if phone:
