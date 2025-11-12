@@ -267,12 +267,10 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
             properties["Full Name"] = {"title": [{"text": {"content": full_name}}]}
         
         # Email
-        if email_val:
-            properties["Email"] = {"email": email_val}
+        properties["Email"] = {"email": email_val}
         
         # Phone Number
-        if phone_number:
-            properties["Phone Number"] = {"phone_number": phone_number}
+        properties["Phone Number"] = {"phone_number": phone_number}
         
         # Zoho ID - Always add this
         if "ZohoUserId" in notion_schema:
