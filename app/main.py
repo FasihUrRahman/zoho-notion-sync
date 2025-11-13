@@ -352,7 +352,13 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
 
         # Check if this contact already exists by Zoho ID (efficient query)
         existing_page = find_notion_record_by_zoho_id(zoho_id)
-        
+
+        # ✅ If not found, retry once after a short delay (handle race condition)
+        if not existing_page:
+            logging.info(f"⏳ Record not found, retrying in 2 seconds (race condition handling)...")
+            time.sleep(2)
+            existing_page = find_notion_record_by_zoho_id(zoho_id)
+
         # ✅ Check if data has actually changed (skip unnecessary updates)
         if existing_page:
             needs_update = (
@@ -432,10 +438,11 @@ def create_or_update_notion_from_zoho(webhook_data, notion_schema=None):
             log_action = "Updated"
             payload = {"properties": properties}
         else:
-            url = "https://api.notion.com/v1/pages"
-            method = requests.post
-            log_action = "Created"
-            payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": properties}
+            # ✅ Still not found after retry - this might be from our own Notion->Zoho sync
+            # Skip creation to avoid duplicates
+            logging.warning(f"⚠️ Zoho contact {zoho_id} not found in Notion after retry - skipping creation to prevent duplicates")
+            logging.info(f"💡 This webhook likely originated from our own Notion→Zoho sync")
+            return {"status": "skipped", "reason": "not_found_after_retry", "zoho_id": zoho_id}
 
         # Make the API call
         r = method(url, headers=NOTION_HEADERS, json=payload)
