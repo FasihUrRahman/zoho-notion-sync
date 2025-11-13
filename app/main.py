@@ -562,55 +562,90 @@ def create_or_update_zoho_from_notion(token, notion_record):
     except Exception as e:
         logging.error(f"❌ Error in create_or_update_zoho_from_notion: {e}")
 
-# -------------------- SEARCH ZOHO CONTACT BY EMAIL --------------------
-def search_zoho_contact_by_email(token, email):
+# -------------------- SEARCH ZOHO CONTACT BY EMAIL OR PHONE --------------------
+def search_zoho_contact_by_email_or_phone(token, email, phone):
     """
-    Search for a Zoho contact by email address.
+    Search for a Zoho contact by email or phone number.
+    First tries email, then falls back to phone if email is null.
     Returns the contact data if found, None otherwise.
     """
-    logging.info(f"🔍 Searching Zoho for contact with email: {email}")
-    try:
-        if not email:
-            logging.warning("⚠️ Cannot search - no email provided")
-            return None
+    headers = {
+        "Authorization": f"Zoho-oauthtoken {token}",
+        "Content-Type": "application/json"
+    }
+    search_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/search"
 
-        headers = {
-            "Authorization": f"Zoho-oauthtoken {token}",
-            "Content-Type": "application/json"
-        }
+    # Try email first
+    if email:
+        logging.info(f"🔍 Searching Zoho for contact with email: {email}")
+        try:
+            params = {
+                "criteria": f"(Email:equals:{email})"
+            }
 
-        # Use Zoho search API with email criteria
-        search_url = f"{ZOHO_API_BASE}/crm/v3/Contacts/search"
-        params = {
-            "criteria": f"(Email:equals:{email})"
-        }
+            logging.info(f"📤 Sending search request to Zoho with criteria: {params['criteria']}")
+            response = requests.get(search_url, headers=headers, params=params)
+            logging.info(f"📥 Zoho search response status: {response.status_code}")
 
-        logging.info(f"📤 Sending search request to Zoho with criteria: {params['criteria']}")
-        response = requests.get(search_url, headers=headers, params=params)
-        logging.info(f"📥 Zoho search response status: {response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                contacts = data.get("data", [])
 
-        if response.status_code == 200:
-            data = response.json()
-            contacts = data.get("data", [])
+                if contacts and len(contacts) > 0:
+                    contact = contacts[0]  # Get first match
+                    zoho_id = contact.get("id")
+                    logging.info(f"✅ Found existing Zoho contact by email: {contact.get('Full_Name')} (ID: {zoho_id})")
+                    return contact
+                else:
+                    logging.info(f"ℹ️ No Zoho contact found with email: {email}")
+            elif response.status_code == 204:
+                logging.info(f"ℹ️ No Zoho contact found with email: {email} (204 No Content)")
 
-            if contacts and len(contacts) > 0:
-                contact = contacts[0]  # Get first match
-                zoho_id = contact.get("id")
-                logging.info(f"✅ Found existing Zoho contact: {contact.get('Full_Name')} (ID: {zoho_id})")
-                return contact
-            else:
-                logging.info(f"ℹ️ No Zoho contact found with email: {email}")
-                return None
-        elif response.status_code == 204:
-            logging.info(f"ℹ️ No Zoho contact found with email: {email} (204 No Content)")
-            return None
-        else:
-            logging.error(f"❌ Zoho search failed (status {response.status_code}): {response.text}")
-            return None
+        except Exception as e:
+            logging.error(f"❌ Error searching Zoho by email: {e}")
 
-    except Exception as e:
-        logging.error(f"❌ Error searching Zoho by email: {e}")
-        return None
+    # Fallback to phone number if email search failed or email is null
+    if phone:
+        logging.info(f"🔍 Searching Zoho for contact with phone: {phone}")
+        try:
+            # Try both Mobile and Phone fields
+            params = {
+                "criteria": f"((Mobile:equals:{phone})or(Phone:equals:{phone}))"
+            }
+
+            logging.info(f"📤 Sending search request to Zoho with criteria: {params['criteria']}")
+            response = requests.get(search_url, headers=headers, params=params)
+            logging.info(f"📥 Zoho search response status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                contacts = data.get("data", [])
+
+                if contacts and len(contacts) > 0:
+                    contact = contacts[0]  # Get first match
+                    zoho_id = contact.get("id")
+                    logging.info(f"✅ Found existing Zoho contact by phone: {contact.get('Full_Name')} (ID: {zoho_id})")
+                    return contact
+                else:
+                    logging.info(f"ℹ️ No Zoho contact found with phone: {phone}")
+            elif response.status_code == 204:
+                logging.info(f"ℹ️ No Zoho contact found with phone: {phone} (204 No Content)")
+
+        except Exception as e:
+            logging.error(f"❌ Error searching Zoho by phone: {e}")
+
+    # Not found by either email or phone
+    if not email and not phone:
+        logging.warning("⚠️ Cannot search - no email or phone provided")
+    else:
+        logging.info(f"ℹ️ No Zoho contact found with email: {email or 'N/A'} or phone: {phone or 'N/A'}")
+
+    return None
+
+# -------------------- LEGACY FUNCTION (for backwards compatibility) --------------------
+def search_zoho_contact_by_email(token, email):
+    """Legacy function - now uses email_or_phone search"""
+    return search_zoho_contact_by_email_or_phone(token, email, None)
 
 # -------------------- SYNC NOTION RECORDS WITHOUT ZOHO ID --------------------
 def sync_notion_records_without_zoho_id():
@@ -1079,17 +1114,18 @@ async def sync_unlinked_records():
                 }
 
                 logging.info(f"\n📝 Processing {idx}/{len(all_results)}: {notion_record['name']}")
-                logging.info(f"   Email: {notion_record['email']}")
+                logging.info(f"   Email: {notion_record['email'] or 'N/A'}")
+                logging.info(f"   Phone: {notion_record['phone'] or 'N/A'}")
                 logging.info(f"   Notion Page ID: {notion_record['id']}")
 
-                # Skip if no email
-                if not notion_record['email']:
-                    logging.warning(f"⚠️ Skipping - no email address")
+                # Skip if neither email nor phone
+                if not notion_record['email'] and not notion_record['phone']:
+                    logging.warning(f"⚠️ Skipping - no email or phone address")
                     skipped_count += 1
                     continue
 
-                # Search Zoho by email
-                zoho_contact = search_zoho_contact_by_email(token, notion_record['email'])
+                # Search Zoho by email or phone
+                zoho_contact = search_zoho_contact_by_email_or_phone(token, notion_record['email'], notion_record['phone'])
 
                 if zoho_contact:
                     # Contact exists in Zoho - link it
@@ -1244,12 +1280,16 @@ def sync_all_unlinked_records():
                 }
 
                 email = notion_record.get("email")
-                if not email:
+                phone = notion_record.get("phone")
+
+                # Skip if neither email nor phone
+                if not email and not phone:
+                    logging.warning(f"⚠️ Skipping {notion_record['name']} - no email or phone")
                     skipped_count += 1
                     continue
 
-                # Search Zoho by email
-                zoho_contact = search_zoho_contact_by_email(token, email)
+                # Search Zoho by email or phone
+                zoho_contact = search_zoho_contact_by_email_or_phone(token, email, phone)
 
                 if zoho_contact:
                     # Link to existing Zoho contact
